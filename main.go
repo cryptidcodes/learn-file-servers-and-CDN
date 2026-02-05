@@ -79,12 +79,12 @@ func main() {
 		log.Fatal("PORT environment variable is not set")
 	}
 
-	awscfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(s3Region))
+	awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(s3Region))
 	if err != nil {
-		log.Fatal("Couldn't load AWS config")
+		log.Fatal(err)
 	}
 
-	s3Client := s3.NewFromConfig(awscfg)
+	client := s3.NewFromConfig(awsCfg)
 
 	cfg := apiConfig{
 		db:               db,
@@ -96,7 +96,7 @@ func main() {
 		s3Region:         s3Region,
 		s3CfDistribution: s3CfDistribution,
 		port:             port,
-		s3Client:         s3Client,
+		s3Client:         client,
 	}
 
 	err = cfg.ensureAssetsDir()

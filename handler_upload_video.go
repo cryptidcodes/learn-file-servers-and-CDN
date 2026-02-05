@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 
@@ -9,6 +8,7 @@ import (
 	"mime"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/cryptidcodes/learn-file-servers-and-CDN/internal/auth"
@@ -17,11 +17,11 @@ import (
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
 	// Set an upload limit of 1GB using http.MaxBytesReader
-	http.MaxBytesReader(w, r.Body, 1<<30)
+	const uploadLimit = 1 << 30
+	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit)
 
 	// Extract the videoID from the URL path paramaters and parse it as a UUID
 	videoIDString := r.PathValue("videoID")
-
 	videoID, err := uuid.Parse(videoIDString)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid ID", err)
@@ -95,21 +95,37 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	params := s3.PutObjectInput{
-		Bucket:      &cfg.s3Bucket,
-		Key:         &videoIDString,
-		Body:        tempFile,
-		ContentType: &mediaType,
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get video aspect ratio", err)
+		return
 	}
+
+	prefix := "other"
+	switch aspectRatio {
+	case "16:9":
+		prefix = "landscape"
+	case "9:16":
+		prefix = "portrait"
+	}
+
+	key := prefix + "/" + getAssetPath(mediaType)
 	// Put the object into S3 using PutObject
-	_, err = cfg.s3Client.PutObject(context.Background(), &params)
+	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
+		Bucket:      aws.String(cfg.s3Bucket),
+		Key:         aws.String(key),
+		Body:        tempFile,
+		ContentType: aws.String(mediaType),
+	})
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't upload video", err)
 		return
 	}
+
 	// Upload the VideoURL of the video record in the database with the S3 bucket and key
-	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, videoIDString)
-	video.VideoURL = &videoURL
+	url := cfg.getObjectURL(key)
+	fmt.Println(url)
+	video.VideoURL = &url
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video", err)
