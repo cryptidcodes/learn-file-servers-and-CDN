@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
+	"github.com/cryptidcodes/learn-file-servers-and-CDN/internal/auth"
 	"github.com/google/uuid"
 )
 
