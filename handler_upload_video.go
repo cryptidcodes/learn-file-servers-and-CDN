@@ -54,7 +54,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Parse the uploaded video file from the form data
+	// Parse the uploaded video file from the form data into a file object in memory
 	file, header, err := r.FormFile("video")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldn't parse video", err)
@@ -73,7 +73,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Save the video to a temporary file on disk
+	// Create a temp file to store the data on disk
 	tempFile, err := os.CreateTemp("", "tubely-upload-*.mp4")
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create temp file", err)
@@ -82,6 +82,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
 
+	// Copy the uploaded video from memory to the temp file on disk
 	_, err = io.Copy(tempFile, file)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't copy video", err)
@@ -95,12 +96,20 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	// Process the video for fast start streaming
+	processedVideoPath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video", err)
+		return
+	}
+	defer os.Remove(processedVideoPath)
+
+	// Determine the aspect ratio of the video
+	aspectRatio, err := getVideoAspectRatio(processedVideoPath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't get video aspect ratio", err)
 		return
 	}
-
 	prefix := "other"
 	switch aspectRatio {
 	case "16:9":
@@ -109,12 +118,19 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		prefix = "portrait"
 	}
 
+	processedVideoFile, err := os.Open(processedVideoPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open processed video", err)
+		return
+	}
+	defer processedVideoFile.Close()
+
 	key := prefix + "/" + getAssetPath(mediaType)
 	// Put the object into S3 using PutObject
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(key),
-		Body:        tempFile,
+		Body:        processedVideoFile,
 		ContentType: aws.String(mediaType),
 	})
 	if err != nil {
@@ -122,14 +138,14 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Upload the VideoURL of the video record in the database with the S3 bucket and key
-	url := cfg.getObjectURL(key)
-	fmt.Println(url)
+	url := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, key)
 	video.VideoURL = &url
+
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video", err)
 		return
 	}
+
 	respondWithJSON(w, http.StatusOK, video)
 }

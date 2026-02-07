@@ -55,7 +55,6 @@ func getVideoAspectRatio(filepath string) (string, error) {
 	// Do some math to determine if the aspect ratio is 16:9, 9:16, or other
 	aspect := "other"
 	stream := ffprobeData.Streams[0]
-	fmt.Printf("Width: %d, Height: %d\n", stream.Width, stream.Height)
 	w9 := stream.Width / 9
 	h9 := stream.Height / 9
 	w16 := stream.Width / 16
@@ -67,8 +66,18 @@ func getVideoAspectRatio(filepath string) (string, error) {
 	if w16 == h9 {
 		aspect = "16:9"
 	}
-	fmt.Println("Aspect ratio: ", aspect)
 	return aspect, nil
+}
+
+// Processes mp4 for fast start streaming using ffmpeg
+func processVideoForFastStart(filepath string) (string, error) {
+	outputPath := filepath + ".processing"
+	cmd := exec.Command("ffmpeg", "-i", filepath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", outputPath)
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+	return outputPath, nil
 }
 
 func (cfg apiConfig) getObjectURL(key string) string {
